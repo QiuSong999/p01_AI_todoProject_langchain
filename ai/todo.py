@@ -1,15 +1,6 @@
 """AI操作单个Todo数据的业务逻辑: AI新增/修改/删除"""
-"""
-业务流程
-    |
-    |
-调用prompt生成提示词
-    |
-    |
-调用DeepSeek
-"""
 
-from ai.client import ask_deepseek
+from ai.client import ask_deepseek,llm
 from db import (
     add_todo,
     update_all,
@@ -38,20 +29,29 @@ from schema import TodoAdd, AITodoUpdate
 def addtodo_by_AI(message):
     try:
         now_time = datetime.now()
-        result = ask_deepseek(add_prompt(message, now_time))    #add_prompt(message, now_time)是提示词
-        result = json.loads(result)     #将上面“response_format=”指定的返回JSON格式的结果，转化为dict字典格式
+
+        prompt_mod = add_prompt()       #AI新增Todo的Prompt模板,add_prompt()现在不接收参数，只负责返回PromptTemplate对象
+        prompt = prompt_mod.format(now_time=now_time,message=message)   #把当前时间和用户输入传入模板,给Prompt模板填充真实数据
+
+        result = ask_deepseek(prompt)    #把生成好的完整prompt发送给DeepSeek
+        result = json.loads(result)     #将上面“response_format=”指定的返回JSON字符串格式的结果，转化为dict字典格式
         #转为字典格式，就可以根据键取值了
 
         todo = TodoAdd(**result)     #把AI给出的 title和deadline，按照 TodoAdd 这个规则创建一个数据对象。
-        # 字典 -> Pydantic对象,这里会校验AI输出的数据格式
+        # 字典 -> Pydantic对象,这里会校验AI输出的数据格式。todo是基于自定义类TodoAdd实例化出来的一个模型对象实例
+        # ⭐上3行代码格式转化流程是：DeepSeek → JSON字符串 → json.loads() → dict → TodoAdd(**dict) → TodoAdd对象
+
+        #后续通过解析器 parser = PydanticOutputParser(pydantic_object=TodoAdd)直接代替上面3行代码
+
         """
         ** 作用：把字典里的键和值，拆开作为函数/类的关键字参数传进去
         TodoAdd(**result)等价于：
-            TodoAdd(             #假如用户上传的title是买面包，deadline是2026-09-18 16:00:00
+            TodoAdd(                    #假如用户上传的title是买面包，deadline是2026-09-18 16:00:00
                 title="买面包",
                 deadline="2026-09-18 16:00:00")
         """
-        new_id = add_todo(todo.title, todo.deadline)        #添加到数据库
+        new_id = add_todo(todo.title, todo.deadline)     #添加到数据库（上行代码创建的TodoAdd对象可以通过.的方式来取响应的值）
+
         return get_todo_id(new_id)      #返回新增后的完整数据
 
     #AI输出的数据不符合TodoAdd要求。 例如：{"title":"买牛奶"}，缺少deadline
@@ -65,19 +65,34 @@ def addtodo_by_AI(message):
         raise Exception("ai create todo failed") from e
 """
 AI新增流程：
-    用户message
-         ↓
-    DeepSeek提取title、deadline
-         ↓
-    json.loads()
-         ↓
-    TodoAdd校验
-         ↓
-    add_todo()
-         ↓
-    get_todo_id()
-         ↓
-    返回完整todo
+    用户输入：
+    "明天上午10点提醒我买牛奶"
+            ↓
+        agent.py
+            ↓
+      addtodo_by_AI()
+            ↓
+      add_prompt()
+            ↓
+    得到PromptTemplate
+            ↓
+    format(now_time,message)
+            ↓
+      生成完整prompt
+            ↓
+      ask_deepseek()
+            ↓
+        DeepSeek
+            ↓
+          JSON
+            ↓
+       json.loads()
+            ↓
+    TodoAdd(**result)
+            ↓
+        add_todo()
+            ↓
+          MySQL
 """
 
 ### 2、定义AI修改 Todo/数据 的业务函数
@@ -85,14 +100,16 @@ def updatetodo_by_AI(message):
     try:
         now_time = datetime.now()
 
-        #第一次调用AI：作用：只负责理解用户想修改什么字段,不负责判断修改哪一个todo
-        result = ask_deepseek(update_prompt(message, now_time))
+        update1_prompt_mod = update_prompt()        #创建修改Todo的Prompt模板
+        update1_prompt = update1_prompt_mod.format(now_time=now_time,message=message)   #填充模板变量
+        result = ask_deepseek(update1_prompt)   #调用DeepSeek提取修改字段
+        # 第一次调用AI：作用：只负责理解用户想修改什么字段,不负责判断修改哪一个todo
 
-        # DeepSeek返回的是JSON字符串,例如：'{"status":"completed"}'。json.loads()转换成Python字典：{"status":"completed"}
+        # DeepSeek返回的是JSON字符串,例如：'{"status":"completed"}'。json.loads()将其转换成Python字典：{"status":"completed"}
         result = json.loads(result)
 
         # 字典解包给Pydantic模型。例如：AITodoUpdate(status="completed")这里会检查AI返回的数据格式是否正确
-        todo = AITodoUpdate(**result)
+        todo = AITodoUpdate(**result)       #todo基于自定义类 AITodoUpdate 实例化出来的一个模型对象实例
         """
         为什么这里需要Pydantic？
         因为：
@@ -110,7 +127,10 @@ def updatetodo_by_AI(message):
 
         # 第二次调用AI：作用：根据用户描述 + 数据库已有todo，找到用户真正想修改的是哪一条数据
         titles = get_all_titles()    #获取数据库所有title，为了AI匹配
-        match_result = ask_deepseek(match_todo_prompt(message, titles))
+
+        update2_prompt_mod = match_todo_prompt()        #创建匹配Todo的Prompt模板
+        update2_prompt = update2_prompt_mod.format(message=message,todos=titles)        #填充模板
+        match_result = ask_deepseek(update2_prompt)     #调用DeepSeek匹配目标Todo id
 
         # AI返回JSON字符串，例如：'{"id": 3}'，json.loads()将其转换成Python字典：{"id": 3}
         match_result = json.loads(match_result)
@@ -140,6 +160,7 @@ def updatetodo_by_AI(message):
             else todo_data["deadline"]
         )
 
+
         # 根据数据库真实id修改数据
         result = update_all(        #update_all()返回修改了几条数据
             todo_data["id"],
@@ -167,25 +188,29 @@ def updatetodo_by_AI(message):
     except Exception as e:
         raise Exception("ai update todo failed") from e
 """
-AI修改todo流程：
+AI修改Todo流程：
 
-用户自然语言
-    ↓
-第一次DeepSeek
-    ↓
-提取修改字段(deadline/status)
-    ↓
-AITodoUpdate校验
-    ↓
-获取数据库title列表
-    ↓
-第二次DeepSeek匹配目标todo id
-    ↓
-根据id查询原数据
-    ↓
-update_all()
-    ↓
-返回修改后的todo
+    用户自然语言
+        ↓
+    updatetodo_by_AI()
+        ↓
+    第一次DeepSeek
+        ↓
+    提取用户想修改的字段(title/deadline/status)
+        ↓
+    AITodoUpdate校验AI输出
+        ↓
+    获取数据库已有Todo标题列表
+        ↓
+    第二次DeepSeek匹配目标Todo id
+        ↓
+    根据id查询原Todo数据
+        ↓
+    合并新字段和旧字段
+        ↓
+    update_all()更新数据库
+        ↓
+    重新查询并返回修改后的Todo
 """
 
 """
@@ -224,11 +249,14 @@ get_todo_id(id)
 ### 11、定义AI删除数据函数
 def deletetodo_by_AI(message):
     try:
-        # 获取数据库已有todo标题
+        # 获取数据库已有Todo标题列表，用于AI匹配目标Todo
         todos = get_all_titles()
 
-        #第二次调用AI：根据用户描述匹配具体todo
-        match_result = ask_deepseek(match_todo_prompt(message, todos))
+        prompt_mod = match_todo_prompt()     #创建匹配Todo的Prompt模板
+        prompt = prompt_mod.format(message=message,todos=todos)     #填充模板变量
+
+        #调用DeepSeek，根据用户描述匹配目标Todo id
+        match_result = ask_deepseek(prompt)
 
 
         match_result = json.loads(match_result)
@@ -252,18 +280,25 @@ def deletetodo_by_AI(message):
 
     except HTTPException:
         raise
+
     except Exception as e:
-        print("真实错误:", e)
-        raise
+        raise Exception("ai delete todo failed") from e
 """
-AI删除流程：
-    用户message
+AI删除Todo流程：
+
+    用户自然语言
         ↓
-    get_all_titles()
+    deletetodo_by_AI()
         ↓
-     AI匹配id
+    获取数据库已有Todo标题列表
         ↓
-      int()
+    创建match_todo_prompt模板
+        ↓
+    format填充用户描述和Todo列表
+        ↓
+    DeepSeek匹配目标Todo id
+        ↓
+    json.loads()
         ↓
     delete_todo()
         ↓

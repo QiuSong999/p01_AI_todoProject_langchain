@@ -73,7 +73,7 @@ class AITodoSearchRequest(BaseModel):   #负责接收和检查用户输入（接
 ### 5、★以后第一次调用 DeepSeek，让它只负责判断：用户想干什么
 class AIAction(BaseModel):
     action: Literal["add", "update", "delete", "search"]    #用户的动作（意图）：Todo 4个动作
-    content: str        #content保存用户原话。
+    content: str = Field(min_length=1)        #content保存用户原话。
 
 #用户一句话 → AIAction → 判断进入哪个函数 → addtodo_by_AI() / updatetodo_by_AI() / deletetodo_by_AI() /searchtodo_by_AI()
 
