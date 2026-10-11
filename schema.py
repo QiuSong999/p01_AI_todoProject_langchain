@@ -126,7 +126,7 @@ class AITodoUpdateRequest(BaseModel):   #AI 修改接口接收用户自然语言
     message:str = Field(min_length=1)
 
 ### 11、 AI修改结果校验模板
-class AITodoUpdate(BaseModel):      #用户可能只修改deadline/status，也可能两个都修改
+class AITodoUpdate(BaseModel):      #用户可能只修改title/deadline/status，也可能3个都修改
     model_config = ConfigDict(extra="forbid")   #"forbid"	禁止多余字段
     #"ignore"——忽略多余字段（默认），直接丢掉不报错；"allow"——允许多余字段，保存下来，可访问；"forbid"——禁止多余字段，有额外字段报错422
     #"model_config = ConfigDict() — 用来设置这个模型的全局行为（比如怎么处理多余字段、怎么处理空格等）
@@ -136,10 +136,12 @@ class AITodoUpdate(BaseModel):      #用户可能只修改deadline/status，也�
     title: str = Field(min_length=1)	字段级	只影响 title 这一个字段
     model_config = ConfigDict(...)	    模型级	影响整个模型（所有字段）
     """
-    deadline:datetime | None = None     #deadline 可以有，也可以没有。
-    status: Literal["pending", "completed"] | None = None           #status 可以有，也可以没有。
 # 如果 extra="ignore"（默认）：这些多余字段被静默丢弃，你根本不知道 AI"乱返回"了。
 # 如果 extra="forbid"：直接报错，你立刻发现"AI 返回格式不对"，可以调整提示词或模型，所以这个类要加上
+
+    title: str | None = None  # 用户想修改的待办事项title；None 表示不修改标题
+    deadline:datetime | None = None     #deadline 可以有，也可以没有。
+    status: Literal["pending", "completed"] | None = None           #status 可以有，也可以没有。
 
 """普通修改返回模板 和 AI修改返回模板 也用TodoResponse(BaseModel)"""
 
@@ -155,6 +157,14 @@ class AITodoDelete(BaseModel):          #用于：接收用户发送给 AI 删�
 ### 14、查询数据条数返回模板
 class CountResponse(BaseModel):
     count:int
+
+### 15、AI匹配 Todo 的结果校验模板
+class AITodoMatch(BaseModel):
+    # 禁止 AI 返回未定义的额外字段
+    model_config = ConfigDict(extra="forbid")
+
+    # 要求 AI 返回待办 ID，且必须是大于 0 的整数
+    id: int = Field(gt=0)
 
 """
 打开http://127.0.0.1:8000/docs，发现下面有Schema，可是里面怎么有

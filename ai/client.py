@@ -1,6 +1,5 @@
 """DeepSeek连接ask_deepseek()"""
 
-
 """
 ai/client.py文件中
     方式1：OpenAI SDK(以前的) ：代码 →  OpenAI客户端(client) →  HTTP请求 → DeepSeek API → 返回JSON   
@@ -52,7 +51,9 @@ ai/client.py文件中
 
 import os
 from dotenv import load_dotenv              #用于加载.env文件
+
 from langchain_openai import ChatOpenAI     #LangChain提供的模型调用类，用来替代原来的OpenAI客户端
+#v1版本的是 from openai import OpenAI
 
 load_dotenv()      # 读取 .env 文件，把里面的环境变量加载到程序中。
 
@@ -73,21 +74,29 @@ def ask_deepseek(message):
     try:
         response = llm.invoke(message)      #调用LangChain模型
         # message会自动转换成模型需要的消息格式
-        # 返回的是LangChain的AIMessage对象
+        # response为模型返回的LangChain的AIMessage对象
         """
-        AIMessage(
-             content='',        #AI的回复文本
-             tool_calls=[
-               {
-                name:'search_all_todos',
-                args:{
-                  page:1,
-                  page_size:10
-                } 
-                }
-             ]
-            )
-            这个就是LangChain格式。
+        response是LangChain返回的AIMessage对象。
+            例如：
+                AIMessage(
+                    content='',
+                    tool_calls=[
+                               {'name':'search_todos_by_status',
+                                'args':{'status':'pending','page':1,'page_size':10},
+                                'id':'call_xxx'  
+                                "type": "tool_call"} 
+                                ],          #当只有一个工具时，tool_calls列表里面就一个大字典元素
+                    additional_kwargs={……},
+                    response_metadata={……},
+                    usage_metadata={……},
+                    ……          
+                        )
+        其中AIMessage里面可通过.方式取出的(属性)有：
+            1、content:消息内容
+            2、tool_calls:保存AI选择的工具信息。
+                （tool_calls里面的args保存AI生成的工具参数）
+            3、response_metadata:模型响应元数据
+            4、usage_metadata:Token 使用统计                      
         """
 
         return response.content      #AIMessage对象中的content属性，就是模型返回的文本内容

@@ -15,7 +15,7 @@ def get_connection():
         user = os.getenv("db_user"),              #读取.env文件中的db_user
         password = os.getenv("db_password"),      #读取.env文件中的db_password
         database = os.getenv("db_database"),      #读取.env文件中的db_database
-        cursorclass = pymysql.cursors.DictCursor  #查询数据库的时候，不要把每一行数据返回成 tuple，改成 dict
+        cursorclass = pymysql.cursors.DictCursor  #★查询数据库的时候，不要把每一行数据返回成 tuple，改成 dict
     )
     return connection
 """
@@ -174,14 +174,14 @@ def add_todo(title,deadline):
 
 
 ### 5、修改函数
-#根据id修改全部（即status和deadline）
-def update_all(id,status,deadline):
+#根据id修改全部（即title,status和deadline）
+def update_all(id,title,status,deadline):
     connection = None
     try:
         connection = get_connection()
         with connection.cursor() as cursor:
-            cursor.execute("update todos set status = %s,deadline = %s where id = %s;",
-                   (status,deadline,id))
+            cursor.execute("update todos set title = %s,status = %s,deadline = %s where id = %s;",
+                   (title,status,deadline,id))
             affected_row = cursor.rowcount   #就是把“这次 update 影响了几行”这个结果保存下来，等 cursor 关闭以后还能继续使用
             # rowcount返回一个整数，表示刚才执行的SQL影响（修改 / 删除 / 插入）了多少行
         connection.commit()

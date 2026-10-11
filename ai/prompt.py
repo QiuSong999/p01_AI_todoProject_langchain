@@ -11,6 +11,8 @@ PromptTemplate = 专门给大模型设计的“可重复使用的提示词模板
     调用format()
      ↓
     生成最终Prompt
+    
+V1 主要通过普通 Python 字符串构造提示词，V2 使用 LangChain 的 PromptTemplate 统一管理模板
 """
 
 from langchain_core.prompts import PromptTemplate
@@ -21,8 +23,8 @@ from langchain_core.prompts import PromptTemplate
 ### 1、创建“判断用户操作(add/update/delete/search)”的提示词模板
 # 作用：创建一个LangChain PromptTemplate对象。模板用于告诉AI：用户想执行什么操作
 #模板中预留 {message} 变量,真正的用户输入会在调用模板时传入。返回格式 {"action":"add","content":"用户原话"}
-def intent_prompt():     #创建一个LangChain提示词模板对象
-    return PromptTemplate(      #PromptTemplate 是构建动态提示词的核心组件
+def intent_prompt():     #创建一个LangChain提示词模板对象。返回的是PromptTemplate 对象
+    return PromptTemplate(            #PromptTemplate 是构建动态提示词的核心组件
         template=("你是一个todo助手。"  #template是参1：提示词模板的文本字符串。其中包含用花括号（例如 {variable}）包裹的占位符
             "判断用户想执行什么操作。"
             "只能返回json。"
@@ -141,13 +143,11 @@ def update_prompt():
     return PromptTemplate(
         template="""
             请根据用户要求，提取需要修改的todo字段。
-
-            只返回json格式。
-            
+            只返回json格式，不要返回Markdown代码块。
             可以修改的字段：
             
             title:
-            任务名称
+            任务名称。用户要求修改任务名称时，必须返回修改后的完整标题。
             
             deadline:
             任务截止时间，格式必须为YYYY-MM-DD HH:MM:SS
@@ -159,14 +159,23 @@ def update_prompt():
             1. 用户没有要求修改的字段，不要返回。
             2. 不要返回解释。
             3. deadline需要根据当前时间理解“今天、明天、下午”等时间表达。
+            4. 用户要求将一个任务名称改成另一个名称时， 必须将新名称放入title字段，而不是返回旧名称。 
+            5. 不要自行补充用户没有要求修改的字段。
+            
+            示例1： 用户要求：把买牛奶改成买咖啡 
+            返回： {{"title": "买咖啡"}} 
+            示例2： 用户要求：把买牛奶的状态改成已完成 
+            返回： {{"status": "completed"}} 
+            示例3： 用户要求：把买牛奶改成买咖啡，并标记为已完成 
+            返回： {{"title": "买咖啡", "status": "completed"}}
 
             当前时间：
             {now_time}
 
-
             用户要求：
-            {message}""",       #这里只创建模板。不负责传入用户输入
-                            #真正传入数据的位置：todo.py里面调用：prompt = add_prompt().format( message=message,now_time=now_time)
+            {message}""",
+        #这里只创建PromptTemplate模板。不负责传入用户输入
+        #真正传入数据的位置：todo.py里面调用：prompt = update_prompt().format( message=message,now_time=now_time)
 
         input_variables=["now_time","message"]  #模板变量：{now_time} 当前时间，让AI理解：今天、明天、后天等时间表达。
     )                                           #{message} 用户原始修改要求。

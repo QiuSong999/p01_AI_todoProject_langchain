@@ -36,8 +36,8 @@ from datetime import datetime
 # 把AI返回的查询参数解析和校验逻辑抽取出来。避免 search_todos_by_title、search_all_todos、
 # search_todos_by_status 三个分支重复写相同代码。
 
-## 1.1 公共参数解析函数
-def parse_ai_search_arguments(tool_call):
+## 1.1 公共参数解析函数 （将AI返回的json格式的其选择的工具以及参数解析成dict，并AITodoSearch进行校验）
+def parse_ai_search_arguments(tool_call):   #tool_call是第一次调用 AI 后，AI 返回的工具调用信息。
     # 这个参数tool_call：是第一次调用AI后，返回的工具调用信息。包括 name：AI选择的工具名称。args：AI生成的工具参数
     try:
         arguments = tool_call["args"]
@@ -116,7 +116,7 @@ def execute_search_tool(tool_call):
     tool_name = tool_call["name"]     #获取AI第一次返回的工具名称，如"search_todos_by_status"
 
     search_data = parse_ai_search_arguments(tool_call)  #利用###1定义的函数，解析AI生成的工具参数
-    #LangChain已经把工具参数转换成Python字典。这里通过AITodoSearch(**arguments)，把字典转换成Pydantic对象，并校验参数格式。
+    #LangChain已经把工具参数转换成Python字典。该函数通过AITodoSearch(**arguments)，把字典转换成Pydantic对象，并校验参数格式。
 
 
     #工具1
@@ -201,7 +201,14 @@ def format_search_result(query_result):
         每页数量
         总页数
     """
-
+    """
+    query_result是执行对应查询工具后返回的查询结果
+        返回的格式为：
+            {"data": todos,
+             "total": total,
+             "page": page,
+             "page_size": page_size}
+     """
     todos = query_result["data"]             # 当前页查询到的Todo数据
     total = query_result["total"]            # 符合条件的总数量
 
@@ -222,7 +229,7 @@ def format_search_result(query_result):
 
 ### 2、AI工具选择函数
 # 作用：第一次调用AI，让AI根据用户需求选择应该执行哪个工具，并生成工具参数
-def ask_deepseek_tool(messages):  # 让AI选择工具
+def ask_deepseek_tool(messages):  # 该message是由下面的函数searchtodo_by_AI(message)中传入
     """
     第一次调用 DeepSeek。
     作用：
@@ -242,14 +249,17 @@ def ask_deepseek_tool(messages):  # 让AI选择工具
         Python执行对应函数
     """
     try:
-        llm_with_tools = llm.bind_tools(ai_tools)       #大模型 + 可使用的工具
-        #.bind_tools()是LangChain提供的方法。作用：把查询工具告诉大模型，让AI可以选择调用哪个工具。
+        #不能调用client文件中的ask_deepseek函数，该函数调用模型直接返回contentl，不包含AIMessage中的tool_calls信息
+        llm_with_tools = llm.bind_tools(ai_tools)       #大模型 + 可使用的工具列表（ai_tools）
+        #⭐.bind_tools()是LangChain提供的方法。作用：把查询工具告诉大模型，让AI可以选择调用哪个工具。
+        #bind_tools(ai_tools)：将工具的名称、描述、参数结构等绑定给模型，供模型决定是否调用以及调用哪个工具
+
         response = llm_with_tools.invoke(messages)      #LangChain统一使用invoke()调用模型。
         # 把问题和工具一起打包发给DeepSeek，让AI来做“选择题”——判断需不需要用工具、用哪个工具、以及提取什么参数。
         # 返回一个AIMessage对象
 
         return response
-        # 返回AI生成的消息对象。里面可能包含：
+        # 返回AI生成的消息对象AIMessage。里面可能包含：
         # 1.content 普通回答
         # 2.tool_calls AI选择的工具
 
@@ -305,55 +315,57 @@ def searchtodo_by_AI(message):
     """
     now_time = datetime.now()
     search_user_prompt_mod = search_user_prompt()      #创建查询用户问题的Prompt模板
-    # 把当前时间和用户的问题传给AI，帮助AI理解“今天、明天、后天”等时间表达
+    # 该模板的作用是：把当前时间和用户的问题传给AI，帮助AI理解“今天、明天、后天”等时间表达
 
     prompt = search_user_prompt_mod.format(     #给Prompt模板填充真实数据，变成可用的提示词
-        now_time=now_time,          #{now_time} → 当前时间
+        now_time=now_time,          #{now_time} → 当前时间：从本函数第一行代码中获取
         message=message             #{message} → 用户输入的问题
     )   #生成完整的user提示词
 
     #上面一步的提示词是让AI理解用户输入的今天，昨天，明天等词汇，下面的是告诉AI如何根据用户输入的话选择相应的工具执行
 
     system_prompt_mod = search_prompt()     #改提示词模板负责告诉AI如何选择工具
-    system_prompt = system_prompt_mod.format()      #生成完整的system提示词
+    system_prompt = system_prompt_mod.format()      #生成完整的system提示词：告诉模型如何选择查询工具
 
     #system与user的提示词，构成完整测提示词meaasges
-    messages = [{"role": "system",
+    messages = [{"role": "system",    #系统提示词
                  "content": system_prompt}, #system_prompt用于告知根据用户输入如何选择相应的工具执行 的规范
 
-                {"role": "user",
+                {"role": "user",      #用户提示词
                  "content": prompt}]    #prompt来自search_user_prompt()。包含：当前时间、用户查询内容
                                         #用于帮助AI理解：今天、明天、后天等日期表达。
 
-    result = ask_deepseek_tool(messages)  #执行AI工具选择函数。 上面message填充后作为参数传给ask_deepseek_tool，即。
+    result = ask_deepseek_tool(messages)  #执行AI工具选择函数。 上面message填充后作为参数传给ask_deepseek_tool。
     # 调用ask_deepseek_tool —— AI工具选择函数。第一次调用AI.目的：让AI根据用户需求选择工具。
-    #返回：AIMessage对象，里面包含tool_calls。 注意：这里还没有查询数据库。
+    #返回的是AIMessage对象，里面包含tool_calls（即AI选择的工具）。
 
     """
     result是LangChain返回的AIMessage对象。
     例如：
-
-    AIMessage(
-        content='',
-        tool_calls=[
-            {
-                'name':'search_todos_by_status',
-                'args':{
-                    'status':'pending',
-                    'page':1,
-                    'page_size':10
-                },
-                'id':'call_xxx'
-            }     ]   )
-    其中：
-    tool_calls保存AI选择的工具信息。
-    args保存AI生成的工具参数。
+        AIMessage(
+            content='',
+            tool_calls=[
+                       {'name':'search_todos_by_status',
+                        'args':{'status':'pending','page':1,'page_size':10},
+                        'id':'call_xxx'  
+                        "type": "tool_call"} 
+                        ],          #当只有一个工具时，tool_calls列表里面就一个大字典元素
+            additional_kwargs={……},
+            response_metadata={……},
+            usage_metadata={……},
+            ……          
+                        )
+    其中AIMessage里面可通过.方式取出的(属性)有：
+        1、content:消息内容
+        2、tool_calls:保存AI选择的工具信息。
+            （tool_calls里面的args保存AI生成的工具参数）
+        3、response_metadata:模型响应元数据
+        4、usage_metadata:Token 使用统计
     """
-
     print("AI返回：", result)
 
     #从ask_deepseek_tool()的输出结果中，通过result.tool_calls取工具列表，再判断
-    if not result.tool_calls:       #如果生成的工具列表为空
+    if not result.tool_calls:       #result为AIMessage对象，如果生成的工具列表为空
         raise HTTPException(
             status_code=400,
             detail="无法识别查询需求"
@@ -374,15 +386,25 @@ def searchtodo_by_AI(message):
     """
 
     tool_call = result.tool_calls[0]  # tool_calls = 工具调用列表，根据列表索引取值（该工具列表是由字典组成的）
-    # result.tool_calls = [工具调用1,工具调用2,工具调用3]      #这种结构
+    # result.tool_calls 是 AI 返回的工具调用列表，列表中的每个元素都是一个工具调用信息字典。
+    # [0] 表示取列表中的第一个工具调用，里面包含工具名称（name）、工具参数（args）和调用ID（id）。
+    # 当前代码的设计是：一次用户查询，只处理 AI 返回的第一个工具调用。所以取第一个工具
+    # 注意：当前代码只处理第一个工具调用。如果 AI 返回多个工具调用，其余调用不会被执行。
+    #如输出：帮我查询一下明天过期的事项，以及和牛肉相关的事项，由于只取了一个工具，所以只能实现查询明天过期的事项
 
     print("工具名称：", tool_call["name"])             #tool_call是dict。工具名称直接通过"name"获取。
     print("工具参数：", tool_call["args"])             #打印所用工具的参数
 
-
     # -------------根据AI选择的工具执行不同函数-------------
     #把第一次 AI 返回的工具调用信息传给 execute_search_tool()，由这个函数根据 AI 选择的工具执行对应的函数对数据库查询，并返回查询结果。
-    query_result = execute_search_tool(tool_call)   #真正的查询动作
+    query_result = execute_search_tool(tool_call)   #此函数来让不同的意图执行相应的查询函数，并进行查询
+    """
+    返回的是查询结构：
+        query_result ={"data": todos,
+                       "total": total,
+                       "page": page,
+                       "page_size": page_size}
+    """
     """
     execute_search_tool()会根据tool_call中的工具名称：
         1. 判断AI选择的是哪个查询工具
@@ -405,24 +427,44 @@ def searchtodo_by_AI(message):
 
     ##5个查询工具执行完成后，统一处理查询结果
     search_result = format_search_result(query_result)      # 调用整理数据库查询结果函数，转换成统一格式，方便后续发送给第二次AI生成自然语言回答
+    """
+    经format_search_result函数处理后，查询到返回的格式统一为：
+        search_result =  {
+                    "data": todos,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages
+                }
+    """
     # 把Python执行数据库查询后的原始结果，整理成适合AI阅读的格式。
     # query_result里面包含数据库返回的数据、总数量、分页信息等。
     # 格式化后发送给第二次AI，让AI根据查询结果生成自然语言回答。
 
-    # ~~~~~~~~~~~~~~~~~~上面第一次调用AI，让AI确定执行哪个函数（工具），并得到返回结果~~~~~~~~~~~~~~~~~~
-    # 第一次调用AI：让 AI 决定“调用哪个工具”（这里必须把 tools 告诉 AI。所以第一次需要：messages + tools）
-    # 第二次：已经没有“选工具”这个任务了，根据查询结果回答用户即可（不需要再传 tools）
-    # ~~~~~~~~~~~~~~~~~~~~~~~~下面第二次调用AI，让AI把查询到的结果组织给我们~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~上面第一次调用AI，让AI确定执行哪个函数（工具），并得到返回结果~~~~~~~~~~~~~~~~~~
+# 第一次调用AI：让 AI 决定“调用哪个工具”（这里必须把 tools 告诉 AI。所以第一次需要：messages + tools）
+# 第二次：已经没有“选工具”这个任务了，根据查询结果回答用户即可（不需要再传 tools）
+# ~~~~~~~~~~~~~~~~~~~~~~~~下面第二次调用AI，让AI把查询到的结果组织给我们~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     # 创建工具执行结果消息，Python执行AI选择的工具后，把查询数据库的结果包装成 AI 能理解的tool消息。
     tool_message = ToolMessage(
-        content=str(search_result),     #工具返回的数据。
-        tool_call_id=tool_call["id"]
+        content=str(search_result),     # 必填：工具执行后返回的数据
+        tool_call_id=tool_call["id"]    # 必填：对应 AI 发出的工具调用 ID
     )
     # 把执行数据库查询的结果，包装成AI能读懂的"工具返回消息"，好在第二次调用AI时喂给它
+    """
+    ToolMessage() 括号内常见的参数有以下这些:
+        content:消息内容，通常是工具执行后返回的数据
+        tool_call_id:对应的工具调用 ID
+        name:工具名称，可选
+        id:这条消息自身的 ID，可选
+        additional_kwargs:额外的消息信息
+        response_metadata:响应的附加元数据
+        status:消息状态，具体支持值取决于 LangChain 版本
+    """
 
     result_prompt_mod = search_result_prompt()      # 创建第二次AI回答使用的Prompt模板
-    result_prompt = result_prompt_mod.format()      #填充Prompt模板
+    result_prompt = result_prompt_mod.format()      #填充Prompt模板，模板没有变量，所以该括号内为空
 
     """
     变量	                                类型	            作用

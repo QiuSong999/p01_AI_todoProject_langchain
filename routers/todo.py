@@ -113,7 +113,7 @@ todo.py
 ### 1、 AI Todo统一入口路由函数
 #用户输入自然语言，由AI判断用户想执行：新增 / 修改 / 删除 / 查询
 @router.post("/todobyai")
-def todobyai(request: AITodoAdd):
+def todobyai(request: AITodoAdd):           #AITodoAdd模板：限制用户上传的message长度最小为1
     result = todo_by_AI(request.message)    #AI总入口函数
     return result
 

@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from fastapi import HTTPException
 
 
-from schema import TodoAdd, AITodoUpdate
+from schema import TodoAdd, AITodoUpdate,AITodoMatch
 
 
 ### 1、定义AI添加 Todo/数据 的业务函数
@@ -32,10 +32,12 @@ def addtodo_by_AI(message):
 
         prompt_mod = add_prompt()       #AI新增Todo的Prompt模板,add_prompt()现在不接收参数，只负责返回PromptTemplate对象
         prompt = prompt_mod.format(now_time=now_time,message=message)   #把当前时间和用户输入传入模板,给Prompt模板填充真实数据
+        #此prompt提示词是让大模型提取要新增数据的字段，如title、deadline等
 
-        result = ask_deepseek(prompt)    #把生成好的完整prompt发送给DeepSeek
+        result = ask_deepseek(prompt)    #把生成好的完整prompt发送给DeepSeek。模型返回要新增数据的title、deadline
+        #上面调用模型返回如'{"title":"买牛奶","deadline":"2026-10-20 15:00:00"}',下面把返回结果转为dict，并用TodoAdd验证返回对象
+
         result = json.loads(result)     #将上面“response_format=”指定的返回JSON字符串格式的结果，转化为dict字典格式
-        #转为字典格式，就可以根据键取值了
 
         todo = TodoAdd(**result)     #把AI给出的 title和deadline，按照 TodoAdd 这个规则创建一个数据对象。
         # 字典 -> Pydantic对象,这里会校验AI输出的数据格式。todo是基于自定义类TodoAdd实例化出来的一个模型对象实例
@@ -50,7 +52,8 @@ def addtodo_by_AI(message):
                 title="买面包",
                 deadline="2026-09-18 16:00:00")
         """
-        new_id = add_todo(todo.title, todo.deadline)     #添加到数据库（上行代码创建的TodoAdd对象可以通过.的方式来取响应的值）
+        new_id = add_todo(todo.title, todo.deadline)     #将AI提取到的添加数据的字段添加到Mysql
+        #todo为上行创建的TodoAdd对象，故可以通过.的方式来取响应的值）
 
         return get_todo_id(new_id)      #返回新增后的完整数据
 
@@ -102,10 +105,10 @@ def updatetodo_by_AI(message):
 
         update1_prompt_mod = update_prompt()        #创建修改Todo的Prompt模板
         update1_prompt = update1_prompt_mod.format(now_time=now_time,message=message)   #填充模板变量
-        result = ask_deepseek(update1_prompt)   #调用DeepSeek提取修改字段
-        # 第一次调用AI：作用：只负责理解用户想修改什么字段,不负责判断修改哪一个todo
-
-        # DeepSeek返回的是JSON字符串,例如：'{"status":"completed"}'。json.loads()将其转换成Python字典：{"status":"completed"}
+        result = ask_deepseek(update1_prompt)   #调用DeepSeek提取要修改的字段
+        # ★★第一次调用AI：作用：只负责理解用户想修改什么字段,不负责判断修改哪一个todo
+        # DeepSeek返回的是JSON字符串,例如：'{"status":"completed"}'。
+        # json.loads()将其转换成Python字典：{"status":"completed"}
         result = json.loads(result)
 
         # 字典解包给Pydantic模型。例如：AITodoUpdate(status="completed")这里会检查AI返回的数据格式是否正确
@@ -125,7 +128,7 @@ def updatetodo_by_AI(message):
         LLM不能直接相信。
         """
 
-        # 第二次调用AI：作用：根据用户描述 + 数据库已有todo，找到用户真正想修改的是哪一条数据
+        # ★★第二次调用AI：作用：根据用户描述 + 数据库已有todo，找到用户真正想修改的是哪一条数据
         titles = get_all_titles()    #获取数据库所有title，为了AI匹配
 
         update2_prompt_mod = match_todo_prompt()        #创建匹配Todo的Prompt模板
@@ -134,17 +137,26 @@ def updatetodo_by_AI(message):
 
         # AI返回JSON字符串，例如：'{"id": 3}'，json.loads()将其转换成Python字典：{"id": 3}
         match_result = json.loads(match_result)
-        todo_id = int(match_result["id"])
-        #从字典中取出id，并转换成int类型，例如：3
+        todo_match = AITodoMatch(**match_result)    # 使用AITodoMatch校验AI返回的数据，确保符合定义的数据结构
+        todo_id = todo_match.id                     # 从校验通过的Pydantic模型对象中获取目标Todo的id
+        #从字典中取出id例如：3
 
         # 根据AI找到的id，利用查询数据函数找到对应的数据
-        todo_data = get_todo_id(todo_id)    #返回找到的数据
+        todo_data = get_todo_id(todo_id)    # 利用根据id查询数据函数找到对应的待修改的数据
+        #返回的是dict格式的数据（db.py文件中get_connection函数，最后的传参cursorclass = pymysql.cursors.DictCursor）
 
         if todo_data is None:
             raise HTTPException(
                 status_code=404,
                 detail="todo not found"
             )
+
+        # 如果 AI 提取出了新title，就使用新title；否则保留数据库原来的标题
+        title = (
+            todo.title      #todo为AI提取出来的，并经过AITodoUpdate检验过的“修改的字段” —— 对象
+            if todo.title is not None  # 判断字段是否提供了新值
+            else todo_data["title"]     # todo_data为原始待修改的数据
+        )
 
         # 如果AI返回了新的status，就使用AI的；如果AI没有返回status，就保留数据库原来的status
         status = (
@@ -160,10 +172,11 @@ def updatetodo_by_AI(message):
             else todo_data["deadline"]
         )
 
-
-        # 根据数据库真实id修改数据
+        #~~~~~
+        # ★根据数据库真实id修改数据
         result = update_all(        #update_all()返回修改了几条数据
-            todo_data["id"],
+            todo_data["id"],        #参数顺序必须与 db.py 中 update_all(id, title, status, deadline) 一致。
+            title,
             status,
             deadline
         )
@@ -249,18 +262,18 @@ get_todo_id(id)
 ### 11、定义AI删除数据函数
 def deletetodo_by_AI(message):
     try:
-        # 获取数据库已有Todo标题列表，用于AI匹配目标Todo
-        todos = get_all_titles()
+        todos = get_all_titles()    # 获取数据库已有Todo标题列表，用于AI匹配目标Todo
 
         prompt_mod = match_todo_prompt()     #创建匹配Todo的Prompt模板
         prompt = prompt_mod.format(message=message,todos=todos)     #填充模板变量
 
         #调用DeepSeek，根据用户描述匹配目标Todo id
         match_result = ask_deepseek(prompt)
+            # 根据用户的message，从现有todos里面匹配到要修改数据的id
 
-
-        match_result = json.loads(match_result)
-        todo_id = int(match_result["id"])
+        match_result = json.loads(match_result)     # JSON字符串转成Python字典
+        todo_match = AITodoMatch(**match_result)   # 使用Pydantic校验AI返回的数据
+        todo_id = todo_match.id                   # 从校验通过的模型对象中获取id
 
         # 根据AI找到的id，删除数据库中的todo
         result = delete_todo(todo_id)       #delete_todo()返回删除了几条数据
