@@ -479,20 +479,8 @@ def searchtodo_by_AI(message):
         result,  #第一次AI返回的AIMessage             #前面result = ask_deepseek_tool(messages)，返回的是AI选择的工具
                 #对应assistant角色：第一次调用AI后的返回结果，也就是：AI决定“我要调用哪个工具，以及传什么参数”
 
-        # result如下：
-        # AIMessage(content="",
-        #   tool_calls=[
-        #       {
-        #           "name":"search_todos_by_title",
-        #           "args":{
-        #               "title":"牛奶"
-        #           }
-        #       }
-        #   ]
-        #   )
-
         tool_message]   #tool_message里面的search_result才是AI调用函数查询后返回的结果  #对应tool角色：这是Python执行工具后的结果。
-    #SystemMessage,result,tool_message顺序不能乱.
+        #SystemMessage,result,tool_message顺序不能乱.
     """
         变量              是什么                             什么时候产生 
       result          第一次AI返回的工具选择结果        ask_deepseek_tool()之后 
@@ -598,3 +586,11 @@ AI查询Todo流程：
     返回用户
 
 """
+
+# 临时测试：直接调用 AI 查询业务函数
+if __name__ == "__main__":
+    # 测试查询一个关键词相关的待办事项
+    result = searchtodo_by_AI("查询买牛奶相关的待办事项")
+
+    # 打印最终返回结果
+    print("查询测试结果：", result)

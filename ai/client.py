@@ -79,7 +79,7 @@ def ask_deepseek(message):
         response是LangChain返回的AIMessage对象。
             例如：
                 AIMessage(
-                    content='',
+                    content='',         # 当有工具调用时，通常为空字符串
                     tool_calls=[
                                {'name':'search_todos_by_status',
                                 'args':{'status':'pending','page':1,'page_size':10},
@@ -92,14 +92,17 @@ def ask_deepseek(message):
                     ……          
                         )
         其中AIMessage里面可通过.方式取出的(属性)有：
-            1、content:消息内容
-            2、tool_calls:保存AI选择的工具信息。
-                （tool_calls里面的args保存AI生成的工具参数）
-            3、response_metadata:模型响应元数据
-            4、usage_metadata:Token 使用统计                      
+            1、content:消息内容(字符串)
+                -注意：如果大模型决定调用工具，这个 content 通常会是空字符串 ''。
+            2、tool_calls:保存 AI 选择的工具信息 (列表，元素为字典)。。
+                - 字典的 'args' 键保存了 AI 生成的工具参数。
+                - 注意：如果大模型只是普通对话，这个列表为空 []。
+            3、response_metadata:模型响应元数据(字典)
+            4、usage_metadata:Token 使用统计  (字典)                    
         """
 
         return response.content      #AIMessage对象中的content属性，就是模型返回的文本内容
+        # ⚠️ 注意：如果外层需要处理工具调用，不能只返回 response.content，
 
     except Exception as e:
         print("ai service error:", e)
